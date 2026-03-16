@@ -10,10 +10,15 @@ function parseCellRef(ref) {
     return { sheet: ref.slice(0, idx), cell: ref.slice(idx + 1) };
 }
 function applyFill(cell, hex) {
-    cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: `FF${hex.replace(/^#/, "")}` },
+    // Assign a full new style object to avoid mutating a shared internal style reference,
+    // which causes ExcelJS to apply the wrong color to cells that share the same style.
+    cell.style = {
+        ...cell.style,
+        fill: {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: `FF${hex.replace(/^#/, "")}` },
+        },
     };
 }
 export class SpinalExcelFiller {
