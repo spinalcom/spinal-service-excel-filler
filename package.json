@@ -1,0 +1,29 @@
+{
+  "name": "spinal-service-excel-filler",
+  "version": "1.0.0",
+  "description": "Lightweight Excel filler service for SpinalCom projects",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "test": "tsc --noEmit"
+  },
+  "keywords": [
+    "spinalcom",
+    "excel",
+    "filler",
+    "service"
+  ],
+  "author": "SpinalCom",
+  "license": "ISC",
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.3"
+  },
+  "spinalDependencies": {}
+}
