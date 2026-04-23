@@ -48,6 +48,14 @@ export interface SetRangeOptions {
 export type VariableValue = CellValueOrEntry | CellValueOrEntry[];
 export type VariableMap = Record<string, VariableValue>;
 
+export interface AddSheetOptions {
+  /**
+   * Name of an existing sheet to duplicate (including cell values, styles,
+   * column widths, row heights, and merged ranges). Images are not copied.
+   */
+  copyFrom?: string;
+}
+
 const TOKEN_RE = /\{\{\s*([A-Za-z_][\w.]*)\s*\}\}/g;
 const SOLE_TOKEN_RE = /^\s*\{\{\s*([A-Za-z_][\w.]*)\s*\}\}\s*$/;
 
@@ -93,6 +101,43 @@ function applyFill(cell: ExcelJS.Cell, hex: string): void {
   };
 }
 
+function cloneWorksheetContent(
+  src: ExcelJS.Worksheet,
+  dst: ExcelJS.Worksheet
+): void {
+  const srcCols = src.columns;
+  if (srcCols && srcCols.length > 0) {
+    dst.columns = srcCols.map((col) => ({
+      width: col.width,
+      style: col.style ? { ...col.style } : undefined,
+      hidden: col.hidden,
+      outlineLevel: col.outlineLevel,
+    })) as ExcelJS.Column[];
+  }
+
+  src.eachRow({ includeEmpty: true }, (srcRow, rowNumber) => {
+    const dstRow = dst.getRow(rowNumber);
+    if (srcRow.height !== undefined) dstRow.height = srcRow.height;
+    if (srcRow.hidden) dstRow.hidden = srcRow.hidden;
+    if (srcRow.outlineLevel !== undefined) {
+      dstRow.outlineLevel = srcRow.outlineLevel;
+    }
+    srcRow.eachCell({ includeEmpty: true }, (srcCell) => {
+      const dstCell = dst.getCell(srcCell.address);
+      dstCell.value = srcCell.value;
+      if (srcCell.style) dstCell.style = { ...srcCell.style };
+    });
+  });
+
+  const merges = (src.model as { merges?: string[] }).merges;
+  if (merges) {
+    for (const range of merges) dst.mergeCells(range);
+  }
+
+  if (src.views) dst.views = src.views.map((v) => ({ ...v }));
+  if (src.pageSetup) dst.pageSetup = { ...src.pageSetup };
+}
+
 function readPlainString(value: ExcelJS.CellValue): string | null {
   if (typeof value === "string") return value;
   if (value && typeof value === "object" && "richText" in value) {
@@ -128,6 +173,7 @@ export class SpinalExcelFiller {
   async loadTemplate(filePath: string): Promise<void> {
     this.workbook = new ExcelJS.Workbook();
     await this.workbook.xlsx.readFile(filePath);
+    this.resolvedScalars.clear();
     this.scanVariables();
   }
 
@@ -142,13 +188,13 @@ export class SpinalExcelFiller {
         buffer.byteOffset + buffer.byteLength
       ) as ArrayBuffer
     );
+    this.resolvedScalars.clear();
     this.scanVariables();
   }
 
   private scanVariables(): void {
     this.templateCells.clear();
     this.variableIndex.clear();
-    this.resolvedScalars.clear();
     if (!this.workbook) return;
 
     this.workbook.eachSheet((ws) => {
@@ -371,6 +417,84 @@ export class SpinalExcelFiller {
       cell.value = entry as ExcelJS.CellValue;
       if (this.config.defaultColor) applyFill(cell, this.config.defaultColor);
     }
+  }
+
+  /**
+   * Rename a sheet. Throws if the source sheet does not exist or the new
+   * name is already taken by a different sheet. Re-scans template variables
+   * so cached cell keys (which include the sheet name) stay accurate.
+   */
+  renameSheet(oldName: string, newName: string): void {
+    if (!this.workbook) {
+      throw new Error("No template loaded. Call loadTemplate() first.");
+    }
+    if (oldName === newName) return;
+
+    const ws = this.workbook.getWorksheet(oldName);
+    if (!ws) {
+      throw new Error(`Worksheet "${oldName}" not found in the template.`);
+    }
+    if (this.workbook.getWorksheet(newName)) {
+      throw new Error(`Worksheet "${newName}" already exists.`);
+    }
+
+    ws.name = newName;
+    this.scanVariables();
+  }
+
+  /**
+   * Remove a sheet from the workbook. Throws if the sheet does not exist.
+   * Re-scans template variables afterwards.
+   */
+  deleteSheet(name: string): void {
+    if (!this.workbook) {
+      throw new Error("No template loaded. Call loadTemplate() first.");
+    }
+    const ws = this.workbook.getWorksheet(name);
+    if (!ws) {
+      throw new Error(`Worksheet "${name}" not found in the template.`);
+    }
+    this.workbook.removeWorksheet(ws.id);
+    this.scanVariables();
+  }
+
+  /**
+   * Add a new sheet to the workbook. If `options.copyFrom` is provided,
+   * the new sheet is a duplicate of the named source sheet (values, styles,
+   * column widths, row heights, merged ranges). Images are not copied.
+   *
+   * @returns the newly created worksheet.
+   *
+   * @example
+   * // Empty sheet
+   * filler.addSheet("Summary");
+   *
+   * @example
+   * // Duplicate an existing template sheet (common "one sheet per client" pattern)
+   * filler.addSheet("Client ACME", { copyFrom: "Template" });
+   */
+  addSheet(name: string, options: AddSheetOptions = {}): ExcelJS.Worksheet {
+    if (!this.workbook) {
+      throw new Error("No template loaded. Call loadTemplate() first.");
+    }
+    if (this.workbook.getWorksheet(name)) {
+      throw new Error(`Worksheet "${name}" already exists.`);
+    }
+
+    if (options.copyFrom !== undefined) {
+      const source = this.workbook.getWorksheet(options.copyFrom);
+      if (!source) {
+        throw new Error(
+          `Source worksheet "${options.copyFrom}" not found in the template.`
+        );
+      }
+      const ws = this.workbook.addWorksheet(name);
+      cloneWorksheetContent(source, ws);
+      this.scanVariables();
+      return ws;
+    }
+
+    return this.workbook.addWorksheet(name);
   }
 
   /**

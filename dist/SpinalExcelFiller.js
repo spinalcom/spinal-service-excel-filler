@@ -37,6 +37,42 @@ function applyFill(cell, hex) {
         },
     };
 }
+function cloneWorksheetContent(src, dst) {
+    const srcCols = src.columns;
+    if (srcCols && srcCols.length > 0) {
+        dst.columns = srcCols.map((col) => ({
+            width: col.width,
+            style: col.style ? { ...col.style } : undefined,
+            hidden: col.hidden,
+            outlineLevel: col.outlineLevel,
+        }));
+    }
+    src.eachRow({ includeEmpty: true }, (srcRow, rowNumber) => {
+        const dstRow = dst.getRow(rowNumber);
+        if (srcRow.height !== undefined)
+            dstRow.height = srcRow.height;
+        if (srcRow.hidden)
+            dstRow.hidden = srcRow.hidden;
+        if (srcRow.outlineLevel !== undefined) {
+            dstRow.outlineLevel = srcRow.outlineLevel;
+        }
+        srcRow.eachCell({ includeEmpty: true }, (srcCell) => {
+            const dstCell = dst.getCell(srcCell.address);
+            dstCell.value = srcCell.value;
+            if (srcCell.style)
+                dstCell.style = { ...srcCell.style };
+        });
+    });
+    const merges = src.model.merges;
+    if (merges) {
+        for (const range of merges)
+            dst.mergeCells(range);
+    }
+    if (src.views)
+        dst.views = src.views.map((v) => ({ ...v }));
+    if (src.pageSetup)
+        dst.pageSetup = { ...src.pageSetup };
+}
 function readPlainString(value) {
     if (typeof value === "string")
         return value;
@@ -60,6 +96,7 @@ export class SpinalExcelFiller {
     async loadTemplate(filePath) {
         this.workbook = new ExcelJS.Workbook();
         await this.workbook.xlsx.readFile(filePath);
+        this.resolvedScalars.clear();
         this.scanVariables();
     }
     /**
@@ -68,12 +105,12 @@ export class SpinalExcelFiller {
     async loadTemplateFromBuffer(buffer) {
         this.workbook = new ExcelJS.Workbook();
         await this.workbook.xlsx.load(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+        this.resolvedScalars.clear();
         this.scanVariables();
     }
     scanVariables() {
         this.templateCells.clear();
         this.variableIndex.clear();
-        this.resolvedScalars.clear();
         if (!this.workbook)
             return;
         this.workbook.eachSheet((ws) => {
@@ -286,6 +323,76 @@ export class SpinalExcelFiller {
             if (this.config.defaultColor)
                 applyFill(cell, this.config.defaultColor);
         }
+    }
+    /**
+     * Rename a sheet. Throws if the source sheet does not exist or the new
+     * name is already taken by a different sheet. Re-scans template variables
+     * so cached cell keys (which include the sheet name) stay accurate.
+     */
+    renameSheet(oldName, newName) {
+        if (!this.workbook) {
+            throw new Error("No template loaded. Call loadTemplate() first.");
+        }
+        if (oldName === newName)
+            return;
+        const ws = this.workbook.getWorksheet(oldName);
+        if (!ws) {
+            throw new Error(`Worksheet "${oldName}" not found in the template.`);
+        }
+        if (this.workbook.getWorksheet(newName)) {
+            throw new Error(`Worksheet "${newName}" already exists.`);
+        }
+        ws.name = newName;
+        this.scanVariables();
+    }
+    /**
+     * Remove a sheet from the workbook. Throws if the sheet does not exist.
+     * Re-scans template variables afterwards.
+     */
+    deleteSheet(name) {
+        if (!this.workbook) {
+            throw new Error("No template loaded. Call loadTemplate() first.");
+        }
+        const ws = this.workbook.getWorksheet(name);
+        if (!ws) {
+            throw new Error(`Worksheet "${name}" not found in the template.`);
+        }
+        this.workbook.removeWorksheet(ws.id);
+        this.scanVariables();
+    }
+    /**
+     * Add a new sheet to the workbook. If `options.copyFrom` is provided,
+     * the new sheet is a duplicate of the named source sheet (values, styles,
+     * column widths, row heights, merged ranges). Images are not copied.
+     *
+     * @returns the newly created worksheet.
+     *
+     * @example
+     * // Empty sheet
+     * filler.addSheet("Summary");
+     *
+     * @example
+     * // Duplicate an existing template sheet (common "one sheet per client" pattern)
+     * filler.addSheet("Client ACME", { copyFrom: "Template" });
+     */
+    addSheet(name, options = {}) {
+        if (!this.workbook) {
+            throw new Error("No template loaded. Call loadTemplate() first.");
+        }
+        if (this.workbook.getWorksheet(name)) {
+            throw new Error(`Worksheet "${name}" already exists.`);
+        }
+        if (options.copyFrom !== undefined) {
+            const source = this.workbook.getWorksheet(options.copyFrom);
+            if (!source) {
+                throw new Error(`Source worksheet "${options.copyFrom}" not found in the template.`);
+            }
+            const ws = this.workbook.addWorksheet(name);
+            cloneWorksheetContent(source, ws);
+            this.scanVariables();
+            return ws;
+        }
+        return this.workbook.addWorksheet(name);
     }
     /**
      * Save the filled workbook to a file.

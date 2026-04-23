@@ -39,6 +39,13 @@ export interface SetRangeOptions {
  */
 export type VariableValue = CellValueOrEntry | CellValueOrEntry[];
 export type VariableMap = Record<string, VariableValue>;
+export interface AddSheetOptions {
+    /**
+     * Name of an existing sheet to duplicate (including cell values, styles,
+     * column widths, row heights, and merged ranges). Images are not copied.
+     */
+    copyFrom?: string;
+}
 export declare class SpinalExcelFiller {
     private workbook;
     private config;
@@ -118,6 +125,33 @@ export declare class SpinalExcelFiller {
      */
     setRange(anchor: string, values: CellValueOrEntry[] | CellValueOrEntry[][], options?: SetRangeOptions): void;
     private writeCell;
+    /**
+     * Rename a sheet. Throws if the source sheet does not exist or the new
+     * name is already taken by a different sheet. Re-scans template variables
+     * so cached cell keys (which include the sheet name) stay accurate.
+     */
+    renameSheet(oldName: string, newName: string): void;
+    /**
+     * Remove a sheet from the workbook. Throws if the sheet does not exist.
+     * Re-scans template variables afterwards.
+     */
+    deleteSheet(name: string): void;
+    /**
+     * Add a new sheet to the workbook. If `options.copyFrom` is provided,
+     * the new sheet is a duplicate of the named source sheet (values, styles,
+     * column widths, row heights, merged ranges). Images are not copied.
+     *
+     * @returns the newly created worksheet.
+     *
+     * @example
+     * // Empty sheet
+     * filler.addSheet("Summary");
+     *
+     * @example
+     * // Duplicate an existing template sheet (common "one sheet per client" pattern)
+     * filler.addSheet("Client ACME", { copyFrom: "Template" });
+     */
+    addSheet(name: string, options?: AddSheetOptions): ExcelJS.Worksheet;
     /**
      * Save the filled workbook to a file.
      */

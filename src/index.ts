@@ -9,4 +9,5 @@ export type {
     SetRangeOptions,
     VariableValue,
     VariableMap,
+    AddSheetOptions,
 } from "./SpinalExcelFiller.js";

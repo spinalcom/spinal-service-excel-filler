@@ -130,6 +130,31 @@ Behavior:
 
 You can still combine it with `setCells` / `setRange` for cells you don't want to tokenize.
 
+### Managing sheets
+
+You can add or remove sheets after loading the template.
+
+```ts
+// Remove a sheet (throws if it doesn't exist)
+filler.deleteSheet("Draft");
+
+// Rename a sheet
+filler.renameSheet("Template", "Client ACME");
+
+// Add an empty sheet
+filler.addSheet("Summary");
+
+// Duplicate an existing sheet — keeps values, styles, column widths,
+// row heights, and merged ranges. Useful for "one sheet per client".
+const ws = filler.addSheet("Client ACME", { copyFrom: "Template" });
+```
+
+After duplication, any `{{tokens}}` present on the source sheet are also
+indexed on the new sheet, so `getVariables()` / `setVariables()` will see
+the new locations automatically.
+
+> Note: images are not copied when duplicating a sheet.
+
 ### Quick end-to-end test
 
 A minimal script you can run to sanity-check both features:
@@ -187,6 +212,9 @@ const buffer = await filler.toBuffer();
 | `getVariables()` | Return the list of `{{name}}` tokens found in the loaded template. |
 | `getVariableLocations()` | Return `{ name: ["Sheet!Cell", ...] }` — where each variable appears. |
 | `setVariables(vars)` | Assign values to variables by name. Arrays on sole-token cells fill downward. Scalars accumulate across calls. |
+| `addSheet(name, options?)` | Add a new sheet. Pass `options.copyFrom` to duplicate an existing sheet (values, styles, widths, heights, merges). Returns the new `Worksheet`. |
+| `renameSheet(oldName, newName)` | Rename a sheet. Throws if the source is missing or the new name is already taken. |
+| `deleteSheet(name)` | Remove a sheet by name. Throws if it doesn't exist. |
 | `save(outputPath)` | Write the filled workbook to a file. |
 | `toBuffer()` | Return the filled workbook as a Buffer. |
 
