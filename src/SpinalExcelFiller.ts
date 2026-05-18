@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 
 /**
  * A cell value with optional conditional coloring.
@@ -515,6 +516,102 @@ export class SpinalExcelFiller {
       throw new Error("No template loaded. Call loadTemplate() first.");
     }
     const arrayBuffer = await this.workbook.xlsx.writeBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+
+  /**
+   * Return the filled workbook as a Buffer with charts preserved.
+   *
+   * ExcelJS does not preserve embedded charts when saving — it drops the
+   * drawing files and the <drawing> reference in the sheet XML.
+   * This method restores those from the original template buffer so that
+   * charts remain visible in the exported file.
+   *
+   * @param originalBuffer - The original template buffer (before any filling).
+   *
+   * @example
+   * const templateBuffer = await fs.readFile("template.xlsx");
+   * const filler = new SpinalExcelFiller();
+   * await filler.loadTemplateFromBuffer(templateBuffer);
+   * filler.setCells({ "Sheet1!A1": "Hello" });
+   * const output = await filler.toBufferWithCharts(templateBuffer);
+   */
+  async toBufferWithCharts(
+    originalBuffer: Buffer | Uint8Array | ArrayBuffer
+  ): Promise<Buffer> {
+    if (!this.workbook) {
+      throw new Error("No template loaded. Call loadTemplate() first.");
+    }
+
+    // Normalise vers ArrayBuffer
+    const toArrayBuffer = (buf: Buffer | Uint8Array | ArrayBuffer): ArrayBuffer => {
+      if (buf instanceof ArrayBuffer) return buf;
+      const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf as unknown as ArrayBufferLike);
+      return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
+    };
+
+    const filledArrayBuffer = await this.workbook.xlsx.writeBuffer();
+    const [filledZip, origZip] = await Promise.all([
+      JSZip.loadAsync(filledArrayBuffer),
+      JSZip.loadAsync(toArrayBuffer(originalBuffer)),
+    ]);
+
+    // 1. Recopier tous les fichiers drawing/chart depuis l'original
+    const chartRelatedFiles = Object.keys(origZip.files).filter(
+      (name) =>
+        /^xl\/(charts|drawings)\//.test(name) ||
+        /^xl\/worksheets\/_rels\//.test(name)
+    );
+    for (const path of chartRelatedFiles) {
+      const f = origZip.file(path);
+      if (f) filledZip.file(path, await f.async("uint8array"));
+    }
+
+    // 2. Réinjecter la balise <drawing r:id="..."/> dans chaque feuille
+    // ExcelJS génère son propre sheet XML sans cette balise, ce qui déconnecte
+    // le graphique de la feuille même si les fichiers drawing sont présents.
+    const worksheetPaths = Object.keys(origZip.files).filter(
+      (name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)
+    );
+    for (const sheetPath of worksheetPaths) {
+      const origSheetFile = origZip.file(sheetPath);
+      if (!origSheetFile) continue;
+      const origSheetXml = await origSheetFile.async("string");
+      const drawingMatch = origSheetXml.match(/<drawing[^/]*\/>/);
+      if (!drawingMatch) continue;
+
+      const filledSheetFile = filledZip.file(sheetPath);
+      if (!filledSheetFile) continue;
+      let sheetXml = await filledSheetFile.async("string");
+      if (!sheetXml.includes("<drawing")) {
+        sheetXml = sheetXml.replace("</worksheet>", `${drawingMatch[0]}</worksheet>`);
+        filledZip.file(sheetPath, sheetXml);
+      }
+    }
+
+    // 3. Compléter [Content_Types].xml avec les types drawing/chart manquants
+    // ExcelJS reconstruit ce fichier sans déclarer les types drawing et chart.
+    const filledCTFile = filledZip.file("[Content_Types].xml");
+    const origCTFile = origZip.file("[Content_Types].xml");
+    if (filledCTFile && origCTFile) {
+      const filledCT = await filledCTFile.async("string");
+      const origCT = await origCTFile.async("string");
+      const missingOverrides = (origCT.match(/<Override[^>]*\/>/g) ?? []).filter(
+        (ov) => /drawing|chart/i.test(ov) && !filledCT.includes(ov)
+      );
+      if (missingOverrides.length > 0) {
+        filledZip.file(
+          "[Content_Types].xml",
+          filledCT.replace("</Types>", missingOverrides.join("") + "</Types>")
+        );
+      }
+    }
+
+    const arrayBuffer = await filledZip.generateAsync({
+      type: "arraybuffer",
+      compression: "DEFLATE",
+      compressionOptions: { level: 6 },
+    });
     return Buffer.from(arrayBuffer);
   }
 }

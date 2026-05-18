@@ -160,5 +160,23 @@ export declare class SpinalExcelFiller {
      * Return the filled workbook as a Buffer.
      */
     toBuffer(): Promise<Buffer>;
+    /**
+     * Return the filled workbook as a Buffer with charts preserved.
+     *
+     * ExcelJS does not preserve embedded charts when saving — it drops the
+     * drawing files and the <drawing> reference in the sheet XML.
+     * This method restores those from the original template buffer so that
+     * charts remain visible in the exported file.
+     *
+     * @param originalBuffer - The original template buffer (before any filling).
+     *
+     * @example
+     * const templateBuffer = await fs.readFile("template.xlsx");
+     * const filler = new SpinalExcelFiller();
+     * await filler.loadTemplateFromBuffer(templateBuffer);
+     * filler.setCells({ "Sheet1!A1": "Hello" });
+     * const output = await filler.toBufferWithCharts(templateBuffer);
+     */
+    toBufferWithCharts(originalBuffer: Buffer | Uint8Array | ArrayBuffer): Promise<Buffer>;
 }
 //# sourceMappingURL=SpinalExcelFiller.d.ts.map
