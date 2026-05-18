@@ -556,7 +556,6 @@ export class SpinalExcelFiller {
       JSZip.loadAsync(toArrayBuffer(originalBuffer)),
     ]);
 
-    // 1. Recopier tous les fichiers drawing/chart depuis l'original
     const chartRelatedFiles = Object.keys(origZip.files).filter(
       (name) =>
         /^xl\/(charts|drawings)\//.test(name) ||
@@ -567,9 +566,6 @@ export class SpinalExcelFiller {
       if (f) filledZip.file(path, await f.async("uint8array"));
     }
 
-    // 2. Réinjecter la balise <drawing r:id="..."/> dans chaque feuille
-    // ExcelJS génère son propre sheet XML sans cette balise, ce qui déconnecte
-    // le graphique de la feuille même si les fichiers drawing sont présents.
     const worksheetPaths = Object.keys(origZip.files).filter(
       (name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)
     );
@@ -589,8 +585,6 @@ export class SpinalExcelFiller {
       }
     }
 
-    // 3. Compléter [Content_Types].xml avec les types drawing/chart manquants
-    // ExcelJS reconstruit ce fichier sans déclarer les types drawing et chart.
     const filledCTFile = filledZip.file("[Content_Types].xml");
     const origCTFile = origZip.file("[Content_Types].xml");
     if (filledCTFile && origCTFile) {
